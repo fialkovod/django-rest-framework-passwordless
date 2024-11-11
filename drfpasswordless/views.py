@@ -39,6 +39,11 @@ class AbstractBaseObtainCallbackToken(APIView):
         raise NotImplementedError
 
     @property
+    def alias_field_name(self):
+        # Alias Field Name
+        raise NotImplementedError    
+
+    @property
     def token_type(self):
         # Token Type
         raise NotImplementedError
@@ -47,7 +52,6 @@ class AbstractBaseObtainCallbackToken(APIView):
         if self.alias_type.upper() not in api_settings.PASSWORDLESS_AUTH_TYPES:
             # Only allow auth types allowed in settings.
             return Response(status=status.HTTP_404_NOT_FOUND)
-
         serializer = self.serializer_class(data=request.data, context={'request': request})
         if serializer.is_valid(raise_exception=True):
             # Validate -
@@ -74,6 +78,7 @@ class ObtainEmailCallbackToken(AbstractBaseObtainCallbackToken):
     failure_response = "Unable to email you a login code. Try again later."
 
     alias_type = "email"
+    alias_field_name = api_settings.PASSWORDLESS_USER_EMAIL_FIELD_NAME
     token_type = CallbackToken.TOKEN_TYPE_AUTH
 
     email_subject = api_settings.PASSWORDLESS_EMAIL_SUBJECT
@@ -91,6 +96,7 @@ class ObtainMobileCallbackToken(AbstractBaseObtainCallbackToken):
     failure_response = "Unable to send you a login code. Try again later."
 
     alias_type = "mobile"
+    alias_field_name = api_settings.PASSWORDLESS_USER_MOBILE_FIELD_NAME
     token_type = CallbackToken.TOKEN_TYPE_AUTH
 
     mobile_message = api_settings.PASSWORDLESS_MOBILE_MESSAGE
@@ -137,7 +143,7 @@ class AbstractBaseObtainAuthToken(APIView):
     serializer_class = None
 
     def post(self, request, *args, **kwargs):
-        serializer = self.serializer_class(data=request.data)
+        serializer = self.serializer_class(data=request.data, context={"request": request})
         if serializer.is_valid(raise_exception=True):
             user = serializer.validated_data["user"]
             token_creator = import_string(api_settings.PASSWORDLESS_AUTH_TOKEN_CREATOR)

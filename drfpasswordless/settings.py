@@ -89,7 +89,15 @@ DEFAULTS = {
     'PASSWORDLESS_SMS_CALLBACK': 'drfpasswordless.utils.send_sms_with_callback_token',
 
     # Token Generation Retry Count
-    'PASSWORDLESS_TOKEN_GENERATION_ATTEMPTS': 3
+    'PASSWORDLESS_TOKEN_GENERATION_ATTEMPTS': 3,
+    
+    # Login user after token validation
+    'PASSWORDLESS_USER_DO_LOGIN': False,
+
+     # RECAPTCHA secret key
+    'PASSWORDLESS_USE_RECAPTCHA': False, 
+    'PASSWORDLESS_RECAPTCHA_SECRET_KEY': '', 
+
 }
 
 # List of settings that may be in string import notation.

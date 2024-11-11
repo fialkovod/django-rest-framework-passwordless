@@ -1,6 +1,6 @@
 import logging
 from django.utils.translation import gettext_lazy as _
-from django.contrib.auth import get_user_model
+from django.contrib.auth import (get_user_model, login as django_login)
 from django.core.exceptions import PermissionDenied
 from django.core.validators import RegexValidator
 from rest_framework import serializers
@@ -8,6 +8,7 @@ from rest_framework.exceptions import ValidationError
 from drfpasswordless.models import CallbackToken
 from drfpasswordless.settings import api_settings
 from drfpasswordless.utils import verify_user_alias, validate_token_age
+import requests
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
@@ -34,8 +35,36 @@ class AbstractBaseAliasAuthenticationSerializer(serializers.Serializer):
         # The alias type, either email or mobile
         raise NotImplementedError
 
+    @property
+    def alias_field_name(self):
+        # The alias field name, either email or mobile
+        raise NotImplementedError
+
     def validate(self, attrs):
         alias = attrs.get(self.alias_type)
+
+
+        if api_settings.PASSWORDLESS_USE_RECAPTCHA is True:
+            captcha_token = attrs.get('captcha_token')
+
+            if captcha_token:
+                data = {
+                    'secret': api_settings.PASSWORDLESS_RECAPTCHA_SECRET_KEY,
+                    'response': captcha_token
+                }
+                try:
+                    r = requests.post('https://www.google.com/recaptcha/api/siteverify', data=data)
+                    result = r.json()
+                    if result['success'] is not True:
+                        msg = _('Recaptcha failed.')
+                        raise serializers.ValidationError(msg)                        
+                except:
+                    msg = _('Can\'t check recaptcha token.')
+                    raise serializers.ValidationError(msg)
+            else:
+                msg = _('No captcha token provided.')
+                raise serializers.ValidationError(msg)                
+
 
         if alias:
             # Create or authenticate a user
@@ -44,15 +73,15 @@ class AbstractBaseAliasAuthenticationSerializer(serializers.Serializer):
             if api_settings.PASSWORDLESS_REGISTER_NEW_USERS is True:
                 # If new aliases should register new users.
                 try:
-                    user = User.objects.get(**{self.alias_type+'__iexact': alias})
+                    user = User.objects.get(**{self.alias_field_name+'__iexact': alias})
                 except User.DoesNotExist:
-                    user = User.objects.create(**{self.alias_type: alias})
+                    user = User.objects.create(**{self.alias_field_name: alias})
                     user.set_unusable_password()
                     user.save()
             else:
                 # If new aliases should not register new users.
                 try:
-                    user = User.objects.get(**{self.alias_type+'__iexact': alias})
+                    user = User.objects.get(**{self.alias_field_name+'__iexact': alias})
                 except User.DoesNotExist:
                     user = None
 
@@ -65,7 +94,7 @@ class AbstractBaseAliasAuthenticationSerializer(serializers.Serializer):
                 msg = _('No account is associated with this alias.')
                 raise serializers.ValidationError(msg)
         else:
-            msg = _('Missing %s.') % self.alias_type
+            msg = _('Missing %s.') % self.alias_field_name
             raise serializers.ValidationError(msg)
 
         attrs['user'] = user
@@ -77,6 +106,10 @@ class EmailAuthSerializer(AbstractBaseAliasAuthenticationSerializer):
     def alias_type(self):
         return 'email'
 
+    @property
+    def alias_field_name(self):
+        return api_settings.PASSWORDLESS_USER_EMAIL_FIELD_NAME
+
     email = serializers.EmailField()
 
 
@@ -85,10 +118,15 @@ class MobileAuthSerializer(AbstractBaseAliasAuthenticationSerializer):
     def alias_type(self):
         return 'mobile'
 
+    @property
+    def alias_field_name(self):
+        return api_settings.PASSWORDLESS_USER_MOBILE_FIELD_NAME
+
     phone_regex = RegexValidator(regex=r'^\+[1-9]\d{1,14}$',
                                  message="Mobile number must be entered in the format:"
                                          " '+999999999'. Up to 15 digits allowed.")
     mobile = serializers.CharField(validators=[phone_regex], max_length=17)
+    captcha_token = serializers.CharField()
 
 
 """
@@ -188,9 +226,9 @@ class AbstractBaseCallbackTokenSerializer(serializers.Serializer):
             raise serializers.ValidationError()
 
         if email:
-            return 'email', email
+            return api_settings.PASSWORDLESS_USER_EMAIL_FIELD_NAME, email
         elif mobile:
-            return 'mobile', mobile
+            return api_settings.PASSWORDLESS_USER_MOBILE_FIELD_NAME, mobile
 
         return None
 
@@ -200,9 +238,9 @@ class CallbackTokenAuthSerializer(AbstractBaseCallbackTokenSerializer):
     def validate(self, attrs):
         # Check Aliases
         try:
-            alias_type, alias = self.validate_alias(attrs)
+            alias_field_name, alias = self.validate_alias(attrs)
             callback_token = attrs.get('token', None)
-            user = User.objects.get(**{alias_type+'__iexact': alias})
+            user = User.objects.get(**{alias_field_name+'__iexact': alias})
             token = CallbackToken.objects.get(**{'user': user,
                                                  'key': callback_token,
                                                  'type': CallbackToken.TOKEN_TYPE_AUTH,
@@ -226,6 +264,8 @@ class CallbackTokenAuthSerializer(AbstractBaseCallbackTokenSerializer):
                         raise serializers.ValidationError(msg)
 
                 attrs['user'] = user
+                if api_settings.PASSWORDLESS_USER_DO_LOGIN:
+                  django_login(self.context["request"], user)
                 return attrs
 
             else:
@@ -259,13 +299,11 @@ class CallbackTokenVerificationSerializer(AbstractBaseCallbackTokenSerializer):
                                                  'key': callback_token,
                                                  'type': CallbackToken.TOKEN_TYPE_VERIFY,
                                                  'is_active': True})
-
             if token.user == user:
                 # Mark this alias as verified
                 success = verify_user_alias(user, token)
                 if success is False:
                     logger.debug("drfpasswordless: Error verifying alias.")
-
                 attrs['user'] = user
                 return attrs
             else:
