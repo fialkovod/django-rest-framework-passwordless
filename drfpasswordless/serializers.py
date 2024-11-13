@@ -8,7 +8,7 @@ from rest_framework.exceptions import ValidationError
 from drfpasswordless.models import CallbackToken
 from drfpasswordless.settings import api_settings
 from drfpasswordless.utils import verify_user_alias, validate_token_age
-import requests
+import requests, random, string
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
@@ -39,6 +39,18 @@ class AbstractBaseAliasAuthenticationSerializer(serializers.Serializer):
     def alias_field_name(self):
         # The alias field name, either email or mobile
         raise NotImplementedError
+    
+    def generate_unique_username(selfS):
+      # Генерация случайной строки длиной 8 символов
+      random_suffix = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
+      unique_username = f"user_{random_suffix}"
+
+      # Проверка на уникальность
+      while User.objects.filter(username=unique_username).exists():
+          random_suffix = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
+          unique_username = f"user_{random_suffix}"
+
+      return unique_username
 
     def validate(self, attrs):
         alias = attrs.get(self.alias_type)
@@ -75,7 +87,8 @@ class AbstractBaseAliasAuthenticationSerializer(serializers.Serializer):
                 try:
                     user = User.objects.get(**{self.alias_field_name+'__iexact': alias})
                 except User.DoesNotExist:
-                    user = User.objects.create(**{self.alias_field_name: alias})
+                    username = self.generate_unique_username()
+                    user = User.objects.create(username=username, **{self.alias_field_name: alias})
                     user.set_unusable_password()
                     user.save()
             else:
